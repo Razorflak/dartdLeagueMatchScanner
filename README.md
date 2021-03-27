@@ -1,1 +1,1 @@
-dartdLeagueMatchScanner
+dartsLeagueMatchScanner
