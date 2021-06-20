@@ -1,26 +1,25 @@
-import googleVision from '@google-cloud/vision';
 import { IGoogeVisonElement } from '../interfaces/IGoogleVisonsElement';
 import { IPoint } from '../interfaces/IPoint';
 import appPath from 'app-root-path';
-import { exec } from 'child_process';
 import imgSize from 'image-size';
-import DrawSheet from './drawSheet';
+import config from '../../config';
+import { ISizeCalculationResult } from 'image-size/dist/types/interface';
+import googleScan from './googleScan';
+import TransformImage from './transformImage';
 
 export default class ScanSheet {
   //TODO à déplacer dans .env
-  static magickImgPathExe = 'C:/Program Files/ImageMagick-7.0.11-Q16-HDRI/magick.exe';
-  static tempPath = `${appPath}/src/temp/scanProcess`;
+  static magickImgPathExe = config.pathImageMagick;
+  static tempPath = `${appPath}/${config.pathTmpProcessPerspective}`;
 
   static async scanSheet(imgSourceName: string): Promise<any> {
     console.log('START');
     try {
-      // TODO Appel de l'API Google pour obtenir les infos de l'image
-
-      const dataExample: any = require('../mock/jsonGoogle.json');
-      /*const elementsExemple: Array<IGoogeVisonElement> = dataExample.responses[0].textAnnotations;
+      const initialGoogleScan = await googleScan.scanImg(`${this.tempPath}/${imgSourceName}`);
+      const elementsExemple: Array<IGoogeVisonElement> = initialGoogleScan[0].textAnnotations;
       const tempNameFile = await this.transformPerspectivImg(imgSourceName, elementsExemple);
-      const finaleNameFile = await this.resizeAndColorTransform(tempNameFile);*/
-      DrawSheet.drawSquareOnSheet();
+      const finaleNameFile = await TransformImage.resize(tempNameFile);
+      const formatGoogleScan = await googleScan.scanImg(`${this.tempPath}/${finaleNameFile}`);
     } catch (error) {
       console.debug('Error:' + JSON.stringify(error));
       throw error;
@@ -42,7 +41,7 @@ export default class ScanSheet {
   }
 
   private static getEndCoordinates(top: boolean, left: boolean, arrayPoints: Array<IPoint>): IPoint | null {
-    //Calcule de la moyenne des coordoné x et y
+    //Calcul de la moyenne des coordoné x et y
     let moyenneX = 0,
       moyenneY = 0,
       nbrValeur = 0;
@@ -64,11 +63,7 @@ export default class ScanSheet {
     return this.getEndCoordinates(top, left, pointsMatches);
   }
 
-  private static async transformPerspectivImg(
-    imgName: string,
-    sheetElements: Array<IGoogeVisonElement>
-  ): Promise<string> {
-    console.log('BEF exec');
+  private static transformPerspectivImg(imgName: string, sheetElements: Array<IGoogeVisonElement>): Promise<string> {
     const pointsCalibrage: Array<IPoint> = this.generateArrayCalibragePoints(sheetElements);
     const topLeftPoint: IPoint | null = this.getEndCoordinates(true, true, pointsCalibrage);
     const topRightPoint: IPoint | null = this.getEndCoordinates(true, false, pointsCalibrage);
@@ -76,48 +71,19 @@ export default class ScanSheet {
     const bottomRightPoint: IPoint | null = this.getEndCoordinates(false, false, pointsCalibrage);
 
     //Getting image dimensions
-    const imgData = imgSize(`${this.tempPath}/${imgName}`);
-
+    let imgData: ISizeCalculationResult;
+    try {
+      imgData = imgSize(`${this.tempPath}/${imgName}`);
+    } catch (error) {
+      throw new Error(`Error during getting size of: ${imgName}`);
+    }
     //Generating coordinates tranform
     const stringCoordinates = `${topLeftPoint!.x},${topLeftPoint!.y} 0,0   ${topRightPoint!.x},${topRightPoint!.y} ${
       imgData.width
     },0   ${bottomRightPoint!.x},${bottomRightPoint!.y} ${imgData.width},${imgData.height}   ${bottomLeftPoint!.x},${
       bottomLeftPoint!.y
     } 0,${imgData.height}`;
-
-    const imgDestName = `toCrop_${imgName}`;
     //Execute perspectiv transform
-    return new Promise((resolve, reject) => {
-      exec(
-        `"${this.magickImgPathExe}" convert "${this.tempPath}/${imgName}" -matte -virtual-pixel transparent -distort Perspective "${stringCoordinates}" "${this.tempPath}/${imgDestName}"`,
-        {
-          cwd: `${appPath}/src/`
-        },
-        (error, stdout, stderr) => {
-          if (error) {
-            console.log(error);
-            reject(error);
-          }
-          console.log('Transform OK');
-          resolve(imgDestName);
-        }
-      );
-    });
-  }
-
-  private static async resizeAndColorTransform(imageName: string): Promise<string> {
-    //TODO déterminer la bonne taille pour la feuille de match pour le  resize
-    const imgNameDest = 'TestFinal.jpg';
-    return new Promise((resolve, reject) => {
-      exec(
-        `"${this.magickImgPathExe}" convert "${this.tempPath}/${imageName}" -resize 1346x1952! ${this.tempPath}/${imgNameDest}`,
-        {
-          cwd: `${appPath}/src/`
-        },
-        (error, stdout, stderr) => {
-          resolve(imgNameDest);
-        }
-      );
-    });
+    return TransformImage.perspective(imgName, stringCoordinates);
   }
 }
